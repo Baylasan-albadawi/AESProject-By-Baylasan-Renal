@@ -13,8 +13,10 @@
 #include "files.h"
 #include "osrng.h"
 #include "hex.h"
-//Baylasan Al-Badawi 211169
-//Renal Salah 227556
+
+// Baylasan Al-Badawi 211169
+// Renal Salah 227556
+
 using namespace std;
 using namespace cv;
 using namespace CryptoPP;
@@ -118,20 +120,22 @@ double calculateUACI(const Mat& original, const Mat& encrypted) {
     return (totalDiff / (original.rows * original.cols * 255.0)) * 100;
 }
 
-int calculateHammingDistance(const Mat& original, const Mat& encrypted) {
-    int hd = 0;
+double calculateHammingDistance(const Mat& original, const Mat& encrypted) {
+    int totalBits = original.rows * original.cols * 8;
+    int differingBits = 0;
+
     for (int i = 0; i < original.rows; ++i) {
         for (int j = 0; j < original.cols; ++j) {
             uchar orig = original.at<uchar>(i, j);
             uchar enc = encrypted.at<uchar>(i, j);
             for (int k = 0; k < 8; ++k) {
                 if (((orig >> k) & 1) != ((enc >> k) & 1)) {
-                    ++hd;
+                    ++differingBits;
                 }
             }
         }
     }
-    return hd;
+    return (differingBits * 100.0) / totalBits;
 }
 
 double chiSquareTest(const Mat& image) {
@@ -177,14 +181,17 @@ Mat drawHistogram(const Mat& image) {
     return histImage;
 }
 
-double correlationAnalysis(const Mat& image) {
+double correlationAnalysis(const Mat& image, bool plot = false) {
     double sum = 0.0, sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0, sumY2 = 0.0;
     int n = image.rows * (image.cols - 1);
 
+    vector<Point> points;
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols - 1; ++j) {
             int x = image.at<uchar>(i, j);
             int y = image.at<uchar>(i, j + 1);
+
+            points.push_back(Point(x, y));
 
             sumX += x;
             sumY += y;
@@ -192,6 +199,15 @@ double correlationAnalysis(const Mat& image) {
             sumX2 += x * x;
             sumY2 += y * y;
         }
+    }
+
+    if (plot) {
+        Mat plotImage = Mat::zeros(300, 300, CV_8UC3);
+        for (const auto& point : points) {
+            plotImage.at<Vec3b>(point.y, point.x) = Vec3b(255, 255, 255);
+        }
+        imshow("Correlation Plot", plotImage);
+        waitKey(0);
     }
 
     double corr = (n * sumXY - sumX * sumY) / sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
@@ -224,6 +240,7 @@ void measureEncryptionTime(const string& inputImagePath, const string& outputIma
 
     auto end = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(end - start).count();
+
     cout << "Encryption Time (ET): " << duration << " ms" << endl;
 
     Mat image = imread(inputImagePath, IMREAD_GRAYSCALE);
@@ -231,9 +248,24 @@ void measureEncryptionTime(const string& inputImagePath, const string& outputIma
     cout << "Encryption Speed (NCPB): " << (double)duration / totalPixels << " ms/pixel" << endl;
 }
 
+void displayMenu() {
+    cout << "1. Encrypt Image" << endl;
+    cout << "2. Hide Information in Image" << endl;
+    cout << "3. Retrieve Information from Image" << endl;
+    cout << "4. Calculate NPCR" << endl;
+    cout << "5. Calculate UACI" << endl;
+    cout << "6. Calculate Hamming Distance" << endl;
+    cout << "7. Perform Chi-Square Test" << endl;
+    cout << "8. Perform Correlation Analysis" << endl;
+    cout << "9. Calculate Information Entropy" << endl;
+    cout << "10. Measure Encryption Time" << endl;
+    cout << "11. Exit" << endl;
+    cout << "Enter your choice: ";
+}
+
 int main() {
     string inputImagePath = "C:/Users/MSI/Downloads/LenaRGB.bmp";
-    string encryptedImagePath = "path_to_encrypted_image.jpg";
+    string encryptedImagePath = "Encrypted_image.jpg";
 
     AutoSeededRandomPool prng;
     SecByteBlock key(AES::DEFAULT_KEYLENGTH);
@@ -243,33 +275,80 @@ int main() {
     prng.GenerateBlock(iv, sizeof(iv));
 
     Mat originalImage = imread(inputImagePath, IMREAD_GRAYSCALE);
+    if (originalImage.empty()) {
+        cerr << "Error: Could not open or find the image." << endl;
+        return -1;
+    }
 
-    string confidentialInfo = "BaylasanRenal211169227556";
-    hideInformation(originalImage, confidentialInfo);
+    while (true) {
+        displayMenu();
+        int choice;
+        cin >> choice;
 
-    string hiddenInfoImagePath = "path_to_hidden_info_image.jpg";
-    imwrite(hiddenInfoImagePath, originalImage);
-
-    encryptImage(hiddenInfoImagePath, encryptedImagePath, key, iv);
-
-    Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
-
-    cout << "NPCR: " << calculateNPCR(originalImage, encryptedImage) << "%" << endl;
-    cout << "UACI: " << calculateUACI(originalImage, encryptedImage) << "%" << endl;
-    cout << "Hamming Distance: " << calculateHammingDistance(originalImage, encryptedImage) << endl;
-    cout << "Chi-square Test: " << chiSquareTest(encryptedImage) << endl;
-    cout << "Correlation: " << correlationAnalysis(encryptedImage) << endl;
-    cout << "Information Entropy: " << informationEntropy(encryptedImage) << endl;
-
-    Mat histImage = drawHistogram(encryptedImage);
-    imshow("Histogram Analysis for Encrypted Image", histImage);
-    imwrite("encrypted_histogram.jpg", histImage);
-    waitKey(0);
-
-    measureEncryptionTime(inputImagePath, encryptedImagePath, key, iv);
-
-    string retrievedInfo = retrieveInformation(originalImage, confidentialInfo.length());
-    cout << "Retrieved Information: " << retrievedInfo << endl;
+        switch (choice) {
+        case 1:
+            encryptImage(inputImagePath, encryptedImagePath, key, iv);
+            break;
+        case 2: {
+            string confidentialInfo;
+            cout << "Enter information to hide: ";
+            cin >> confidentialInfo;
+            hideInformation(originalImage, confidentialInfo);
+            string hiddenInfoImagePath = "Hidden_info_image.jpg";
+            imwrite(hiddenInfoImagePath, originalImage);
+            cout << "Information hidden in the image and saved to " << hiddenInfoImagePath << endl;
+            break;
+        }
+        case 3: {
+            int length;
+            cout << "Enter the length of information to retrieve: ";
+            cin >> length;
+            string retrievedInfo = retrieveInformation(originalImage, length);
+            cout << "Retrieved Information: " << retrievedInfo << endl;
+            break;
+        }
+        case 4: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "NPCR: " << calculateNPCR(originalImage, encryptedImage) << "%" << endl;
+            break;
+        }
+        case 5: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "UACI: " << calculateUACI(originalImage, encryptedImage) << "%" << endl;
+            break;
+        }
+        case 6: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "Hamming Distance: " << calculateHammingDistance(originalImage, encryptedImage) << "%" << endl;
+            break;
+        }
+        case 7: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "Chi-square Test: " << chiSquareTest(encryptedImage) << endl;
+            break;
+        }
+        case 8: {
+            cout << "Performing Correlation Analysis..." << endl;
+            cout << "Original Image Correlation: " << correlationAnalysis(originalImage, true) << endl;
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "Encrypted Image Correlation: " << correlationAnalysis(encryptedImage, true) << endl;
+            break;
+        }
+        case 9: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            cout << "Information Entropy: " << informationEntropy(encryptedImage) << endl;
+            break;
+        }
+        case 10:
+            measureEncryptionTime(inputImagePath, encryptedImagePath, key, iv);
+            break;
+        case 11:
+            cout << "Exiting..." << endl;
+            return 0;
+        default:
+            cout << "Invalid choice. Please try again." << endl;
+        }
+    }
 
     return 0;
 }

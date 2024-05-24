@@ -45,6 +45,29 @@ void encryptImage(const string& inputImagePath, const string& outputImagePath, c
     imshow("Encrypted Image", encryptedImage);
     waitKey(0);
 }
+void decryptImage(const string& inputImagePath, const string& outputImagePath, const SecByteBlock& key, const byte* iv) {
+    Mat encryptedImage = imread(inputImagePath, IMREAD_GRAYSCALE);
+
+    if (encryptedImage.empty()) {
+        cerr << "Error: Could not open or find the encrypted image." << endl;
+        return;
+    }
+
+    vector<byte> ciphertext(encryptedImage.datastart, encryptedImage.dataend);
+    vector<byte> decryptedtext(ciphertext.size());
+
+    CBC_Mode<AES>::Decryption decryption;
+    decryption.SetKeyWithIV(key, key.size(), iv);
+
+    ArraySource(ciphertext.data(), ciphertext.size(), true,
+        new StreamTransformationFilter(decryption, new ArraySink(decryptedtext.data(), decryptedtext.size())));
+
+    Mat decryptedImage(encryptedImage.size(), encryptedImage.type(), decryptedtext.data());
+    imwrite(outputImagePath, decryptedImage);
+
+    imshow("Decrypted Image", decryptedImage);
+    waitKey(0);
+}
 
 void hideInformation(Mat& image, const string& info) {
     if (image.empty()) {
@@ -259,13 +282,15 @@ void displayMenu() {
     cout << "8. Perform Correlation Analysis" << endl;
     cout << "9. Calculate Information Entropy" << endl;
     cout << "10. Measure Encryption Time" << endl;
-    cout << "11. Exit" << endl;
+    cout << "11. Decrypt Image" << endl;
+    cout << "12. Exit" << endl;
     cout << "Enter your choice: ";
 }
 
 int main() {
     string inputImagePath = "C:/Users/MSI/Downloads/LenaRGB.bmp";
-    string encryptedImagePath = "Encrypted_image.jpg";
+    string encryptedImagePath = "C:Users/MSI/source/repos/AESProjectBaylasanRenal/Encrypted_image.jpg";
+    string decryptedImagePath = "Decrypted_image.jpg";
 
     AutoSeededRandomPool prng;
     SecByteBlock key(AES::DEFAULT_KEYLENGTH);
@@ -343,6 +368,9 @@ int main() {
             measureEncryptionTime(inputImagePath, encryptedImagePath, key, iv);
             break;
         case 11:
+            decryptImage(encryptedImagePath, decryptedImagePath, key, iv);
+            break;
+        case 12:
             cout << "Exiting..." << endl;
             return 0;
         default:

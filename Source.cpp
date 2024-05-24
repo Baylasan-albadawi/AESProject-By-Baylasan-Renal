@@ -33,7 +33,7 @@ void encryptImage(const string& inputImagePath, const string& outputImagePath, c
     vector<byte> plaintext(image.datastart, image.dataend);
     vector<byte> ciphertext(plaintext.size());
 
-    CBC_Mode<AES>::Encryption encryption;
+    CTR_Mode<AES>::Encryption encryption;
     encryption.SetKeyWithIV(key, key.size(), iv);
 
     ArraySource(plaintext.data(), plaintext.size(), true,
@@ -58,7 +58,7 @@ void decryptImage(const string& inputImagePath, const string& outputImagePath, c
         vector<byte> ciphertext(encryptedImage.datastart, encryptedImage.dataend);
         vector<byte> decryptedtext(ciphertext.size());
 
-        CBC_Mode<AES>::Decryption decryption;
+        CTR_Mode<AES>::Decryption decryption;
         decryption.SetKeyWithIV(key, key.size(), iv);
 
         try {

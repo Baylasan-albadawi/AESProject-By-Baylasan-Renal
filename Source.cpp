@@ -23,7 +23,7 @@ using namespace CryptoPP;
 using namespace std::chrono;
 
 void encryptImage(const string& inputImagePath, const string& outputImagePath, const SecByteBlock& key, const byte* iv) {
-    Mat image = imread(inputImagePath, IMREAD_GRAYSCALE);
+    Mat image = imread(inputImagePath, IMREAD_COLOR);
 
     if (image.empty()) {
         cerr << "Error: Could not open or find the image." << endl;
@@ -45,28 +45,50 @@ void encryptImage(const string& inputImagePath, const string& outputImagePath, c
     imshow("Encrypted Image", encryptedImage);
     waitKey(0);
 }
+
 void decryptImage(const string& inputImagePath, const string& outputImagePath, const SecByteBlock& key, const byte* iv) {
-    Mat encryptedImage = imread(inputImagePath, IMREAD_GRAYSCALE);
+    try {
+        Mat encryptedImage = imread(inputImagePath, IMREAD_COLOR);
 
-    if (encryptedImage.empty()) {
-        cerr << "Error: Could not open or find the encrypted image." << endl;
-        return;
+        if (encryptedImage.empty()) {
+            cerr << "Error: Could not open or find the encrypted image." << endl;
+            return;
+        }
+
+        vector<byte> ciphertext(encryptedImage.datastart, encryptedImage.dataend);
+        vector<byte> decryptedtext(ciphertext.size());
+
+        CBC_Mode<AES>::Decryption decryption;
+        decryption.SetKeyWithIV(key, key.size(), iv);
+
+        try {
+            ArraySource(ciphertext.data(), ciphertext.size(), true,
+                new StreamTransformationFilter(decryption, new ArraySink(decryptedtext.data(), decryptedtext.size())));
+        }
+        catch (const CryptoPP::Exception& e) {
+            cerr << "Error during decryption: " << e.what() << endl;
+            return;
+        }
+
+        Mat decryptedImage(encryptedImage.size(), encryptedImage.type(), decryptedtext.data());
+
+        if (!imwrite(outputImagePath, decryptedImage)) {
+            cerr << "Error: Could not save the decrypted image." << endl;
+            return;
+        }
+
+        imshow("Decrypted Image", decryptedImage);
+        waitKey(0);
     }
-
-    vector<byte> ciphertext(encryptedImage.datastart, encryptedImage.dataend);
-    vector<byte> decryptedtext(ciphertext.size());
-
-    CBC_Mode<AES>::Decryption decryption;
-    decryption.SetKeyWithIV(key, key.size(), iv);
-
-    ArraySource(ciphertext.data(), ciphertext.size(), true,
-        new StreamTransformationFilter(decryption, new ArraySink(decryptedtext.data(), decryptedtext.size())));
-
-    Mat decryptedImage(encryptedImage.size(), encryptedImage.type(), decryptedtext.data());
-    imwrite(outputImagePath, decryptedImage);
-
-    imshow("Decrypted Image", decryptedImage);
-    waitKey(0);
+    catch (const cv::Exception& e) {
+        cerr << "OpenCV Error: " << e.what() << endl;
+    }
+    catch (const exception& e) {
+        cerr << "Standard Exception: " << e.what() << endl;
+    }
+    catch (...) {
+        cerr << "Unknown Error occurred." << endl;
+    }
 }
 
 void hideInformation(Mat& image, const string& info) {
@@ -78,19 +100,19 @@ void hideInformation(Mat& image, const string& info) {
     int infoIndex = 0;
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols; ++j) {
-            if (infoIndex >= info.size() * 8) {
-                return;
+            for (int k = 0; k < 3; ++k) { 
+                if (infoIndex >= info.size() * 8) {
+                    return;
+                }
+
+                uchar& pixelValue = image.at<Vec3b>(i, j)[k];
+
+                uchar bit = (info[infoIndex / 8] >> (infoIndex % 8)) & 1;
+
+                pixelValue = (pixelValue & 0xFE) | bit;
+
+                ++infoIndex;
             }
-
-            uchar pixelValue = image.at<uchar>(i, j);
-
-            uchar bit = (info[infoIndex / 8] >> (infoIndex % 8)) & 1;
-
-            pixelValue = (pixelValue & 0xFE) | bit;
-
-            image.at<uchar>(i, j) = pixelValue;
-
-            ++infoIndex;
         }
     }
 }
@@ -105,17 +127,19 @@ string retrieveInformation(const Mat& image, int length) {
     int infoIndex = 0;
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols; ++j) {
-            if (infoIndex >= length * 8) {
-                break;
+            for (int k = 0; k < 3; ++k) {
+                if (infoIndex >= length * 8) {
+                    break;
+                }
+
+                uchar pixelValue = image.at<Vec3b>(i, j)[k];
+
+                uchar bit = pixelValue & 1;
+
+                info[infoIndex / 8] |= (bit << (infoIndex % 8));
+
+                ++infoIndex;
             }
-
-            uchar pixelValue = image.at<uchar>(i, j);
-
-            uchar bit = pixelValue & 1;
-
-            info[infoIndex / 8] |= (bit << (infoIndex % 8));
-
-            ++infoIndex;
         }
     }
     return info;
@@ -125,35 +149,41 @@ double calculateNPCR(const Mat& original, const Mat& encrypted) {
     int diffCount = 0;
     for (int i = 0; i < original.rows; ++i) {
         for (int j = 0; j < original.cols; ++j) {
-            if (original.at<uchar>(i, j) != encrypted.at<uchar>(i, j)) {
-                ++diffCount;
+            for (int k = 0; k < 3; ++k) { 
+                if (original.at<Vec3b>(i, j)[k] != encrypted.at<Vec3b>(i, j)[k]) {
+                    ++diffCount;
+                }
             }
         }
     }
-    return (diffCount * 100.0) / (original.rows * original.cols);
+    return (diffCount * 100.0) / (original.rows * original.cols * 3);
 }
 
 double calculateUACI(const Mat& original, const Mat& encrypted) {
     double totalDiff = 0.0;
     for (int i = 0; i < original.rows; ++i) {
         for (int j = 0; j < original.cols; ++j) {
-            totalDiff += abs(original.at<uchar>(i, j) - encrypted.at<uchar>(i, j));
+            for (int k = 0; k < 3; ++k) { 
+                totalDiff += abs(original.at<Vec3b>(i, j)[k] - encrypted.at<Vec3b>(i, j)[k]);
+            }
         }
     }
-    return (totalDiff / (original.rows * original.cols * 255.0)) * 100;
+    return (totalDiff / (original.rows * original.cols * 255.0 * 3)) * 100; 
 }
 
 double calculateHammingDistance(const Mat& original, const Mat& encrypted) {
-    int totalBits = original.rows * original.cols * 8;
+    int totalBits = original.rows * original.cols * 8 * 3; 
     int differingBits = 0;
 
     for (int i = 0; i < original.rows; ++i) {
         for (int j = 0; j < original.cols; ++j) {
-            uchar orig = original.at<uchar>(i, j);
-            uchar enc = encrypted.at<uchar>(i, j);
-            for (int k = 0; k < 8; ++k) {
-                if (((orig >> k) & 1) != ((enc >> k) & 1)) {
-                    ++differingBits;
+            for (int k = 0; k < 3; ++k) { 
+                uchar orig = original.at<Vec3b>(i, j)[k];
+                uchar enc = encrypted.at<Vec3b>(i, j)[k];
+                for (int l = 0; l < 8; ++l) {
+                    if (((orig >> l) & 1) != ((enc >> l) & 1)) {
+                        ++differingBits;
+                    }
                 }
             }
         }
@@ -162,43 +192,52 @@ double calculateHammingDistance(const Mat& original, const Mat& encrypted) {
 }
 
 double chiSquareTest(const Mat& image) {
-    vector<int> hist(256, 0);
+    vector<int> hist(256 * 3, 0); 
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols; ++j) {
-            hist[image.at<uchar>(i, j)]++;
+            for (int k = 0; k < 3; ++k) { 
+                hist[image.at<Vec3b>(i, j)[k] + 256 * k]++;
+            }
         }
     }
 
     double chiSquare = 0.0;
     double expected = image.rows * image.cols / 256.0;
-    for (int i = 0; i < 256; ++i) {
+    for (int i = 0; i < 256 * 3; ++i) { 
         chiSquare += pow(hist[i] - expected, 2) / expected;
     }
     return chiSquare;
 }
 
 Mat drawHistogram(const Mat& image) {
-    vector<int> hist(256, 0);
+    vector<int> hist(256 * 3, 0);
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols; ++j) {
-            hist[image.at<uchar>(i, j)]++;
+            for (int k = 0; k < 3; ++k) {
+                hist[image.at<Vec3b>(i, j)[k] + 256 * k]++;
+            }
         }
     }
 
     int hist_w = 512;
     int hist_h = 400;
-    int bin_w = cvRound((double)hist_w / 256);
+    int bin_w = cvRound((double)hist_w / (256 * 3));
 
-    Mat histImage(hist_h, hist_w, CV_8UC1, Scalar(255));
+    Mat histImage(hist_h, hist_w, CV_8UC3, Scalar(255, 255, 255));
 
     int max_value = *max_element(hist.begin(), hist.end());
-    for (int i = 0; i < 256; ++i) {
+    for (int i = 0; i < 256 * 3; ++i) { 
         hist[i] = ((double)hist[i] / max_value) * histImage.rows;
     }
 
-    for (int i = 1; i < 256; ++i) {
+    for (int i = 1; i < 256 * 3; ++i) {
+        Scalar color;
+        if (i < 256) color = Scalar(255, 0, 0);
+        else if (i < 512) color = Scalar(0, 255, 0);
+        else color = Scalar(0, 0, 255);
+
         line(histImage, Point(bin_w * (i - 1), hist_h - hist[i - 1]),
-            Point(bin_w * i, hist_h - hist[i]), Scalar(0), 2, 8, 0);
+            Point(bin_w * i, hist_h - hist[i]), color, 2, 8, 0);
     }
 
     return histImage;
@@ -211,16 +250,18 @@ double correlationAnalysis(const Mat& image, bool plot = false) {
     vector<Point> points;
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols - 1; ++j) {
-            int x = image.at<uchar>(i, j);
-            int y = image.at<uchar>(i, j + 1);
+            for (int k = 0; k < 3; ++k) { 
+                int x = image.at<Vec3b>(i, j)[k];
+                int y = image.at<Vec3b>(i, j + 1)[k];
 
-            points.push_back(Point(x, y));
+                points.push_back(Point(x, y));
 
-            sumX += x;
-            sumY += y;
-            sumXY += x * y;
-            sumX2 += x * x;
-            sumY2 += y * y;
+                sumX += x;
+                sumY += y;
+                sumXY += x * y;
+                sumX2 += x * x;
+                sumY2 += y * y;
+            }
         }
     }
 
@@ -238,16 +279,18 @@ double correlationAnalysis(const Mat& image, bool plot = false) {
 }
 
 double informationEntropy(const Mat& image) {
-    vector<int> hist(256, 0);
+    vector<int> hist(256 * 3, 0); 
     for (int i = 0; i < image.rows; ++i) {
         for (int j = 0; j < image.cols; ++j) {
-            hist[image.at<uchar>(i, j)]++;
+            for (int k = 0; k < 3; ++k) {
+                hist[image.at<Vec3b>(i, j)[k] + 256 * k]++;
+            }
         }
     }
 
     double entropy = 0.0;
-    int totalPixels = image.rows * image.cols;
-    for (int i = 0; i < 256; ++i) {
+    int totalPixels = image.rows * image.cols * 3; 
+    for (int i = 0; i < 256 * 3; ++i) { 
         if (hist[i] > 0) {
             double p = (double)hist[i] / totalPixels;
             entropy -= p * log2(p);
@@ -266,8 +309,8 @@ void measureEncryptionTime(const string& inputImagePath, const string& outputIma
 
     cout << "Encryption Time (ET): " << duration << " ms" << endl;
 
-    Mat image = imread(inputImagePath, IMREAD_GRAYSCALE);
-    int totalPixels = image.rows * image.cols;
+    Mat image = imread(inputImagePath, IMREAD_COLOR);
+    int totalPixels = image.rows * image.cols * 3; 
     cout << "Encryption Speed (NCPB): " << (double)duration / totalPixels << " ms/pixel" << endl;
 }
 
@@ -283,13 +326,15 @@ void displayMenu() {
     cout << "9. Calculate Information Entropy" << endl;
     cout << "10. Measure Encryption Time" << endl;
     cout << "11. Decrypt Image" << endl;
-    cout << "12. Exit" << endl;
+    cout << "12. Draw Histogram" << endl;  
+    cout << "13. Exit" << endl; 
     cout << "Enter your choice: ";
 }
 
+
 int main() {
     string inputImagePath = "C:/Users/MSI/Downloads/LenaRGB.bmp";
-    string encryptedImagePath = "C:Users/MSI/source/repos/AESProjectBaylasanRenal/Encrypted_image.jpg";
+    string encryptedImagePath = "Encrypted_image.jpg";
     string decryptedImagePath = "Decrypted_image.jpg";
 
     AutoSeededRandomPool prng;
@@ -299,7 +344,7 @@ int main() {
     prng.GenerateBlock(key, key.size());
     prng.GenerateBlock(iv, sizeof(iv));
 
-    Mat originalImage = imread(inputImagePath, IMREAD_GRAYSCALE);
+    Mat originalImage = imread(inputImagePath, IMREAD_COLOR);
     if (originalImage.empty()) {
         cerr << "Error: Could not open or find the image." << endl;
         return -1;
@@ -333,34 +378,34 @@ int main() {
             break;
         }
         case 4: {
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "NPCR: " << calculateNPCR(originalImage, encryptedImage) << "%" << endl;
             break;
         }
         case 5: {
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "UACI: " << calculateUACI(originalImage, encryptedImage) << "%" << endl;
             break;
         }
         case 6: {
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "Hamming Distance: " << calculateHammingDistance(originalImage, encryptedImage) << "%" << endl;
             break;
         }
         case 7: {
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "Chi-square Test: " << chiSquareTest(encryptedImage) << endl;
             break;
         }
         case 8: {
             cout << "Performing Correlation Analysis..." << endl;
             cout << "Original Image Correlation: " << correlationAnalysis(originalImage, true) << endl;
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "Encrypted Image Correlation: " << correlationAnalysis(encryptedImage, true) << endl;
             break;
         }
         case 9: {
-            Mat encryptedImage = imread(encryptedImagePath, IMREAD_GRAYSCALE);
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
             cout << "Information Entropy: " << informationEntropy(encryptedImage) << endl;
             break;
         }
@@ -370,7 +415,14 @@ int main() {
         case 11:
             decryptImage(encryptedImagePath, decryptedImagePath, key, iv);
             break;
-        case 12:
+        case 12: {
+            Mat encryptedImage = imread(encryptedImagePath, IMREAD_COLOR);
+            Mat histogram = drawHistogram(encryptedImage);
+            imshow("Histogram", histogram);
+            waitKey(0);
+            break;
+        }
+        case 13:
             cout << "Exiting..." << endl;
             return 0;
         default:
